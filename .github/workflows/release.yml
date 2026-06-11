@@ -45,10 +45,6 @@ jobs:
           go build -ldflags="-s -w -X main.version=${{ steps.version.outputs.VERSION }}" \
             -o dist/linux-arm64 ./cmd
 
-      - name: Package scripts
-        run: |
-          tar czf dist/scripts.tar.gz scripts
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -58,4 +54,3 @@ jobs:
           files: |
             dist/linux
             dist/linux-arm64
-            dist/scripts.tar.gz
