@@ -1,0 +1,501 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>VOD Server Analytics</title>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        :root {
+            --bg-color: #080b11;
+            --surface-bg: rgba(17, 22, 34, 0.65);
+            --border-color: rgba(255, 255, 255, 0.05);
+            --accent-purple: #7c3aed;
+            --accent-pink: #db2777;
+            --accent-emerald: #059669;
+            --accent-blue: #2563eb;
+            --accent-yellow: #d97706;
+            --text-primary: #f9fafb;
+            --text-secondary: #9ca3af;
+            --text-muted: #6b7280;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Outfit', sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            padding: 2.5rem;
+            min-height: 100vh;
+            background-image: 
+                radial-gradient(at 0% 0%, rgba(124, 58, 237, 0.08) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(219, 39, 119, 0.05) 0px, transparent 50%);
+        }
+
+        .container {
+            max-width: 1300px;
+            margin: 0 auto;
+        }
+
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 2.5rem;
+        }
+
+        .brand-section h1 {
+            font-size: 2rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            background: linear-gradient(135deg, #a78bfa 0%, #ec4899 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .brand-section p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            font-weight: 400;
+            margin-top: 0.3rem;
+        }
+
+        .live-status {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border-color);
+            padding: 0.6rem 1.2rem;
+            border-radius: 99px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            letter-spacing: 0.03em;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            background-color: #10b981;
+            border-radius: 50%;
+            box-shadow: 0 0 12px #10b981;
+            animation: pulse-dot 2s infinite;
+        }
+
+        @keyframes pulse-dot {
+            0% { transform: scale(0.9); opacity: 0.6; }
+            50% { transform: scale(1.1); opacity: 1; }
+            100% { transform: scale(0.9); opacity: 0.6; }
+        }
+
+        /* Stats Grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+            gap: 1.25rem;
+            margin-bottom: 2.5rem;
+        }
+
+        .stat-card {
+            background: var(--surface-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            padding: 1.5rem;
+            backdrop-filter: blur(20px);
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stat-card::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+        }
+
+        .stat-card:hover {
+            transform: translateY(-4px);
+            border-color: rgba(255, 255, 255, 0.1);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+        }
+
+        .stat-title {
+            font-size: 0.8rem;
+            color: var(--text-secondary);
+            font-weight: 500;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            margin-bottom: 0.75rem;
+        }
+
+        .stat-value {
+            font-size: 2rem;
+            font-weight: 700;
+            letter-spacing: -0.01em;
+            line-height: 1.1;
+        }
+
+        .stat-desc {
+            font-size: 0.75rem;
+            color: var(--text-muted);
+            margin-top: 0.5rem;
+            font-weight: 400;
+        }
+
+        /* Charts Section */
+        .charts-grid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 1.5rem;
+            margin-bottom: 2rem;
+        }
+
+        @media (max-width: 900px) {
+            .charts-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .chart-card {
+            background: var(--surface-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 24px;
+            padding: 1.75rem;
+            backdrop-filter: blur(20px);
+            display: flex;
+            flex-direction: column;
+            height: 380px;
+        }
+
+        .chart-header {
+            margin-bottom: 1.25rem;
+        }
+
+        .chart-title {
+            font-size: 1rem;
+            font-weight: 600;
+            letter-spacing: -0.01em;
+        }
+
+        .chart-container {
+            flex-grow: 1;
+            position: relative;
+            width: 100%;
+            height: 100%;
+        }
+
+        footer {
+            margin-top: 4rem;
+            text-align: center;
+            padding-bottom: 2rem;
+            font-size: 0.8rem;
+            color: var(--text-muted);
+            letter-spacing: 0.02em;
+        }
+
+        footer a {
+            color: var(--text-secondary);
+            text-decoration: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <div class="brand-section">
+                <h1>VOD Analytics</h1>
+                <p>สถิติการใช้งานและสุขภาพระบบในรอบ 7 วัน (อัปเดตทุก 10 วิ)</p>
+            </div>
+            <div class="live-status">
+                <span class="status-dot"></span>
+                <span style="color: var(--text-secondary);">LIVE MONITOR</span>
+            </div>
+        </header>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-title">คำขอสตรีมมิ่ง</div>
+                <div class="stat-value" id="val-requests">-</div>
+                <div class="stat-desc">คำขอตอบรับสะสมทั้งหมด</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-title">แคช Hit Rate</div>
+                <div class="stat-value" id="val-hitrate" style="color: #10b981;">- %</div>
+                <div class="stat-desc">สัดส่วนการดึงข้อมูลจากแรม</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-title">ขนาดแคชสะสม</div>
+                <div class="stat-value" id="val-cachesize">-</div>
+                <div class="stat-desc">จำนวนไฟล์ที่แคชในแรม</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-title">ซีพียูระบบ</div>
+                <div class="stat-value" id="val-cpu">- %</div>
+                <div class="stat-desc">อัตราการใช้งาน CPU เครื่อง</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-title">แรมระบบ</div>
+                <div class="stat-value" id="val-ram">- %</div>
+                <div class="stat-desc">อัตราการใช้แรมเครื่องโดยรวม</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-title">ฮาร์ดดิสก์</div>
+                <div class="stat-value" id="val-disk">- %</div>
+                <div class="stat-desc">สัดส่วนพื้นที่ดิสก์ที่ใช้ไป</div>
+            </div>
+        </div>
+
+        <div class="charts-grid">
+            <div class="chart-card">
+                <div class="chart-header">
+                    <div class="chart-title">อัตราการรับชม (Requests per 10s)</div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="requestsChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <div class="chart-header">
+                    <div class="chart-title">ประสิทธิภาพแคช (Cache Hits vs Misses)</div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="cacheChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <div class="chart-header">
+                    <div class="chart-title">การใช้พลังงานตัวเครื่อง (System Load)</div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="sysChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <div class="chart-header">
+                    <div class="chart-title">ความจุฮาร์ดดิสก์ (Disk Capacity Trend)</div>
+                </div>
+                <div class="chart-container">
+                    <canvas id="diskChart"></canvas>
+                </div>
+            </div>
+        </div>
+
+        <footer>
+            <p>VdoHide Core · Golang VOD module dashboard</p>
+        </footer>
+    </div>
+
+    <script>
+        // กำหนดสไตล์ฟอนต์และสีของแกนกราฟ Chart.js
+        Chart.defaults.font.family = "'Outfit', sans-serif";
+        Chart.defaults.color = 'rgba(255, 255, 255, 0.4)';
+        Chart.defaults.borderColor = 'rgba(255, 255, 255, 0.03)';
+        Chart.defaults.plugins.legend.labels.color = 'rgba(255, 255, 255, 0.6)';
+
+        let reqsChart, cacheChart, sysChart, diskChart;
+
+        async function updateDashboard() {
+            try {
+                const response = await fetch('/status/data');
+                if (!response.ok) {
+                    if (response.status === 401) {
+                        window.location.reload();
+                    }
+                    return;
+                }
+                const data = await response.json();
+                
+                if (data.history && data.history.length > 0) {
+                    const latest = data.history[data.history.length - 1];
+                    
+                    document.getElementById('val-requests').innerText = latest.requests.toLocaleString();
+                    document.getElementById('val-cachesize').innerText = latest.cache_size.toLocaleString() + ' ไฟล์';
+                    document.getElementById('val-cpu').innerText = latest.sys_cpu.toFixed(1) + ' %';
+                    document.getElementById('val-ram').innerText = latest.sys_ram.toFixed(1) + ' %';
+                    document.getElementById('val-disk').innerText = latest.sys_disk.toFixed(1) + ' %';
+
+                    const totalAttempts = latest.hits + latest.misses;
+                    const hitRate = totalAttempts > 0 ? (latest.hits / totalAttempts * 100) : 0;
+                    document.getElementById('val-hitrate').innerText = hitRate.toFixed(1) + ' %';
+                }
+
+                renderCharts(data.history);
+            } catch (err) {
+                console.error("Dashboard error:", err);
+            }
+        }
+
+        function renderCharts(history) {
+            // แสดงประวัติล่าสุดไม่เกิน 40 จุดเพื่อความคลีนและสวยงามบนกราฟสตรีมมิ่ง
+            const limitHistory = history.slice(-40);
+
+            const labels = limitHistory.map(h => {
+                const d = new Date(h.timestamp);
+                return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            });
+
+            const requestsDiff = [];
+            const cacheHitsDiff = [];
+            const cacheMissesDiff = [];
+
+            for (let i = 0; i < limitHistory.length; i++) {
+                if (i === 0) {
+                    requestsDiff.push(0);
+                    cacheHitsDiff.push(0);
+                    cacheMissesDiff.push(0);
+                } else {
+                    const reqDiff = limitHistory[i].requests - limitHistory[i-1].requests;
+                    requestsDiff.push(reqDiff < 0 ? 0 : reqDiff);
+
+                    const hitDiff = limitHistory[i].hits - limitHistory[i-1].hits;
+                    cacheHitsDiff.push(hitDiff < 0 ? 0 : hitDiff);
+
+                    const missDiff = limitHistory[i].misses - limitHistory[i-1].misses;
+                    cacheMissesDiff.push(missDiff < 0 ? 0 : missDiff);
+                }
+            }
+
+            const cpuData = limitHistory.map(h => h.sys_cpu);
+            const ramData = limitHistory.map(h => h.sys_ram);
+            const diskData = limitHistory.map(h => h.sys_disk);
+
+            // 1. Requests Chart (Line with gradient fill)
+            if (reqsChart) {
+                reqsChart.data.labels = labels;
+                reqsChart.data.datasets[0].data = requestsDiff;
+                reqsChart.update('none');
+            } else {
+                const ctx = document.getElementById('requestsChart').getContext('2d');
+                const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+                gradient.addColorStop(0, 'rgba(167, 139, 250, 0.25)');
+                gradient.addColorStop(1, 'rgba(167, 139, 250, 0.0)');
+
+                reqsChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Requests',
+                            data: requestsDiff,
+                            borderColor: '#a78bfa',
+                            borderWidth: 2,
+                            backgroundColor: gradient,
+                            fill: true,
+                            tension: 0.35,
+                            pointRadius: 0,
+                            pointHoverRadius: 4
+                        }]
+                    },
+                    options: { 
+                        responsive: true, 
+                        maintainAspectRatio: false,
+                        plugins: { legend: { display: false } },
+                        scales: { y: { beginAtZero: true } }
+                    }
+                });
+            }
+
+            // 2. Cache Efficiency Chart (Bar stacked with clean round borders)
+            if (cacheChart) {
+                cacheChart.data.labels = labels;
+                cacheChart.data.datasets[0].data = cacheHitsDiff;
+                cacheChart.data.datasets[1].data = cacheMissesDiff;
+                cacheChart.update('none');
+            } else {
+                const ctx = document.getElementById('cacheChart').getContext('2d');
+                cacheChart = new Chart(ctx, {
+                    type: 'bar',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            { label: 'Cache Hits', data: cacheHitsDiff, backgroundColor: '#10b981', borderRadius: 4 },
+                            { label: 'Cache Misses', data: cacheMissesDiff, backgroundColor: '#ef4444', borderRadius: 4 }
+                        ]
+                    },
+                    options: { 
+                        responsive: true, 
+                        maintainAspectRatio: false, 
+                        scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true } } 
+                    }
+                });
+            }
+
+            // 3. CPU & RAM Chart (Clean twin lines)
+            if (sysChart) {
+                sysChart.data.labels = labels;
+                sysChart.data.datasets[0].data = cpuData;
+                sysChart.data.datasets[1].data = ramData;
+                sysChart.update('none');
+            } else {
+                const ctx = document.getElementById('sysChart').getContext('2d');
+                sysChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            { label: 'CPU %', data: cpuData, borderColor: '#3b82f6', borderWidth: 2, pointRadius: 0, tension: 0.35 },
+                            { label: 'RAM %', data: ramData, borderColor: '#f59e0b', borderWidth: 2, pointRadius: 0, tension: 0.35 }
+                        ]
+                    },
+                    options: { 
+                        responsive: true, 
+                        maintainAspectRatio: false,
+                        scales: { y: { min: 0, max: 100 } }
+                    }
+                });
+            }
+
+            // 4. Disk Capacity Chart
+            if (diskChart) {
+                diskChart.data.labels = labels;
+                diskChart.data.datasets[0].data = diskData;
+                diskChart.update('none');
+            } else {
+                const ctx = document.getElementById('diskChart').getContext('2d');
+                const gradient = ctx.createLinearGradient(0, 0, 0, 300);
+                gradient.addColorStop(0, 'rgba(239, 68, 68, 0.1)');
+                gradient.addColorStop(1, 'rgba(239, 68, 68, 0.0)');
+
+                diskChart = new Chart(ctx, {
+                    type: 'line',
+                    data: {
+                        labels: labels,
+                        datasets: [{
+                            label: 'Disk Usage %',
+                            data: diskData,
+                            borderColor: '#ef4444',
+                            borderWidth: 2,
+                            backgroundColor: gradient,
+                            fill: true,
+                            pointRadius: 0,
+                            tension: 0.1
+                        }]
+                    },
+                    options: { 
+                        responsive: true, 
+                        maintainAspectRatio: false, 
+                        plugins: { legend: { display: false } },
+                        scales: { y: { min: 0, max: 100 } } 
+                    }
+                });
+            }
+        }
+
+        // โหลดข้อมูล
+        updateDashboard();
+        // รีเฟรชหน้าเว็บดึงข้อมูลใหม่ทุกๆ 10 วินาที
+        setInterval(updateDashboard, 10000);
+    </script>
+</body>
+</html>

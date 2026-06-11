@@ -209,3 +209,44 @@ func TestCacheControl(t *testing.T) {
 		t.Error("Expected file3 to be purged from cache")
 	}
 }
+
+func TestStatusPage(t *testing.T) {
+	cfg := &config.Config{
+		Port:                   8889,
+		DefaultSegmentDuration: 4000,
+		MaxCacheEntries:        10,
+	}
+
+	mux := http.NewServeMux()
+	RegisterHandlers(mux, cfg)
+
+	// 1. Check unauthorized request (returns 401)
+	req, _ := http.NewRequest("GET", "/status", nil)
+	rr := httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusUnauthorized {
+		t.Errorf("Expected status endpoint without auth to return 401, got %d", rr.Code)
+	}
+
+	// 2. Check authorized request (returns 200)
+	req, _ = http.NewRequest("GET", "/status", nil)
+	req.SetBasicAuth("admin", "admin")
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status endpoint with auth to return 200, got %d", rr.Code)
+	}
+
+	// 3. Check status/data authorized request (returns 200)
+	req, _ = http.NewRequest("GET", "/status/data", nil)
+	req.SetBasicAuth("admin", "admin")
+	rr = httptest.NewRecorder()
+	mux.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Errorf("Expected status data with auth to return 200, got %d", rr.Code)
+	}
+}
+

@@ -31,3 +31,5 @@ node_modules/
 install.txt
 install.nginx-vod-module.v4.sh.sh
 config.json
+metrics_history.csv
+*.csv

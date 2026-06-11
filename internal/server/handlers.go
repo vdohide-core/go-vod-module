@@ -3,6 +3,7 @@ package server
 import (
 	"container/list"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"go-vod-module/internal/config"
@@ -18,6 +20,9 @@ import (
 	"go-vod-module/internal/hls"
 	"go-vod-module/internal/mp4"
 )
+
+//go:embed status.html
+var statusHTML []byte
 
 type Clip struct {
 	Type string `json:"type"`
@@ -134,7 +139,8 @@ var (
 
 func getOrParseMetadata(cfg *config.Config, filePath string, item string) (*mp4.MovieMetadata, []hls.HLSSegment, error) {
 	if meta, segments, ok := metadataCache.Get(filePath); ok {
-		log.Printf("[CACHE] HIT: %s (request: %s)", filePath, item)
+		// log.Printf("[CACHE] HIT: %s (request: %s)", filePath, item)
+		atomic.AddInt64(&TotalHits, 1)
 		return meta, segments, nil
 	}
 
@@ -155,8 +161,9 @@ func getOrParseMetadata(cfg *config.Config, filePath string, item string) (*mp4.
 	for _, track := range meta.Tracks {
 		totalSamples += len(track.Samples)
 	}
-	estMemMB := float64(totalSamples*32) / (1024.0 * 1024.0)
-	log.Printf("[CACHE] MISS: %s (request: %s, parsed metadata, tracks: %d, samples: %d, estimated RAM: %.2f MB)", filePath, item, len(meta.Tracks), totalSamples, estMemMB)
+	// estMemMB := float64(totalSamples*32) / (1024.0 * 1024.0)
+	// log.Printf("[CACHE] MISS: %s (request: %s, parsed metadata, tracks: %d, samples: %d, estimated RAM: %.2f MB)", filePath, item, len(meta.Tracks), totalSamples, estMemMB)
+	atomic.AddInt64(&TotalMisses, 1)
 
 	return meta, segments, nil
 }
@@ -203,6 +210,29 @@ func resolveFilePath(cfg *config.Config, filename string) (string, error) {
 func RegisterHandlers(mux *http.ServeMux, cfg *config.Config) {
 	// Reinitialize cache with configured max entries
 	metadataCache = NewLRUMetadataCache(cfg.MaxCacheEntries)
+
+	// 0. Start background CSV stats history collector
+	StartMetricCollector(cfg.MediaRoot)
+
+	// Built-in status page dashboard (Auth: admin/admin)
+	mux.HandleFunc("GET /status", BasicAuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusOK)
+		w.Write(statusHTML)
+	}))
+
+	// Built-in status JSON data endpoint (Auth: admin/admin)
+	mux.HandleFunc("GET /status/data", BasicAuthMiddleware(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		history, err := ReadHistory()
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":"%v"}`, err), http.StatusInternalServerError)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"history": history,
+		})
+	}))
 
 	// 1. Health check
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) {
@@ -253,7 +283,7 @@ func RegisterHandlers(mux *http.ServeMux, cfg *config.Config) {
 	})
 
 	// 2. HLS route: /hls/{path...}
-	mux.HandleFunc("/hls/{path...}", func(w http.ResponseWriter, r *http.Request) {
+	hlsHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// CORS & Private Network Access headers
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "*")
@@ -397,9 +427,10 @@ func RegisterHandlers(mux *http.ServeMux, cfg *config.Config) {
 
 		http.Error(w, "Resource not found", http.StatusNotFound)
 	})
+	mux.HandleFunc("/hls/{path...}", MetricsMiddleware(hlsHandler, "/hls/*"))
 
 	// 3. DASH route: /dash/{path...}
-	mux.HandleFunc("/dash/{path...}", func(w http.ResponseWriter, r *http.Request) {
+	dashHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// CORS & Private Network Access headers
 		w.Header().Set("Access-Control-Allow-Origin", "*")
 		w.Header().Set("Access-Control-Allow-Headers", "*")
@@ -491,6 +522,7 @@ func RegisterHandlers(mux *http.ServeMux, cfg *config.Config) {
 
 		http.Error(w, "Resource not found", http.StatusNotFound)
 	})
+	mux.HandleFunc("/dash/{path...}", MetricsMiddleware(dashHandler, "/dash/*"))
 }
 
 func parseDASHSegInfo(name string) (int, string, error) {
