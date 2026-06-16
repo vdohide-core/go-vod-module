@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"sort"
 
@@ -112,8 +113,13 @@ func MuxSegment(ctx context.Context, meta *mp4.MovieMetadata, segment HLSSegment
 
 	// 4. Parse codec metadata for configuration NALs
 	var spsList, ppsList [][]byte
+	nalLengthSize := 4 // default
 	if videoTrack != nil && len(videoTrack.CodecBox) > 0 {
-		spsList, ppsList, _ = extractSPSandPPS(videoTrack.CodecBox)
+		var err error
+		spsList, ppsList, nalLengthSize, err = extractSPSandPPS(videoTrack.CodecBox)
+		if err != nil {
+			log.Printf("[HLS] Warning: failed to extract SPS/PPS: %v", err)
+		}
 	}
 
 	var audioProfile, audioFreqIdx, audioChanCfg byte
@@ -136,7 +142,7 @@ func MuxSegment(ctx context.Context, meta *mp4.MovieMetadata, segment HLSSegment
 			// SPS/PPS must be prepended at every keyframe (IDR) so the decoder
 			// can initialize correctly when starting playback from any segment
 			writeExtra := s.sample.IsKeyframe
-			annexBBytes, err := avccToAnnexB(rawBytes, spsList, ppsList, writeExtra)
+			annexBBytes, err := avccToAnnexB(rawBytes, spsList, ppsList, writeExtra, nalLengthSize)
 			if err != nil {
 				return fmt.Errorf("failed to convert video to Annex B: %w", err)
 			}
@@ -189,25 +195,28 @@ func MuxSegment(ctx context.Context, meta *mp4.MovieMetadata, segment HLSSegment
 	return nil
 }
 
-func extractSPSandPPS(codecBox []byte) (spsList [][]byte, ppsList [][]byte, err error) {
+func extractSPSandPPS(codecBox []byte) (spsList [][]byte, ppsList [][]byte, nalLengthSize int, err error) {
 	if len(codecBox) < 14 {
-		return nil, nil, fmt.Errorf("codec box too small")
+		return nil, nil, 4, fmt.Errorf("codec box too small")
 	}
 	payload := codecBox[8:]
 	if len(payload) < 6 {
-		return nil, nil, fmt.Errorf("avcC payload too small")
+		return nil, nil, 4, fmt.Errorf("avcC payload too small")
 	}
+
+	// NAL length size: (payload[4] & 0x03) + 1 → can be 1, 2, 3, or 4
+	nalLengthSize = int(payload[4]&0x03) + 1
 
 	numSPS := int(payload[5] & 0x1F)
 	idx := 6
 	for i := 0; i < numSPS; i++ {
 		if idx+2 > len(payload) {
-			return nil, nil, fmt.Errorf("truncated SPS length")
+			return nil, nil, nalLengthSize, fmt.Errorf("truncated SPS length")
 		}
 		spsLen := int(uint16(payload[idx])<<8 | uint16(payload[idx+1]))
 		idx += 2
 		if idx+spsLen > len(payload) {
-			return nil, nil, fmt.Errorf("truncated SPS data")
+			return nil, nil, nalLengthSize, fmt.Errorf("truncated SPS data")
 		}
 		sps := make([]byte, spsLen)
 		copy(sps, payload[idx:idx+spsLen])
@@ -216,18 +225,18 @@ func extractSPSandPPS(codecBox []byte) (spsList [][]byte, ppsList [][]byte, err 
 	}
 
 	if idx+1 > len(payload) {
-		return nil, nil, fmt.Errorf("truncated PPS count")
+		return nil, nil, nalLengthSize, fmt.Errorf("truncated PPS count")
 	}
 	numPPS := int(payload[idx])
 	idx++
 	for i := 0; i < numPPS; i++ {
 		if idx+2 > len(payload) {
-			return nil, nil, fmt.Errorf("truncated PPS length")
+			return nil, nil, nalLengthSize, fmt.Errorf("truncated PPS length")
 		}
 		ppsLen := int(uint16(payload[idx])<<8 | uint16(payload[idx+1]))
 		idx += 2
 		if idx+ppsLen > len(payload) {
-			return nil, nil, fmt.Errorf("truncated PPS data")
+			return nil, nil, nalLengthSize, fmt.Errorf("truncated PPS data")
 		}
 		pps := make([]byte, ppsLen)
 		copy(pps, payload[idx:idx+ppsLen])
@@ -235,7 +244,7 @@ func extractSPSandPPS(codecBox []byte) (spsList [][]byte, ppsList [][]byte, err 
 		idx += ppsLen
 	}
 
-	return spsList, ppsList, nil
+	return spsList, ppsList, nalLengthSize, nil
 }
 
 func parseAudioSpecificConfig(codecBox []byte) (profile byte, freqIdx byte, chanCfg byte, err error) {
@@ -266,13 +275,13 @@ func parseAudioSpecificConfig(codecBox []byte) (profile byte, freqIdx byte, chan
 }
 
 // Convert AVCC size-prefixed NAL units into Annex B start-code format
-func avccToAnnexB(avcc []byte, spsList [][]byte, ppsList [][]byte, writeExtra bool) ([]byte, error) {
+func avccToAnnexB(avcc []byte, spsList [][]byte, ppsList [][]byte, writeExtra bool, nalLengthSize int) ([]byte, error) {
 	var out []byte
 
 	// 1. Prepend Access Unit Delimiter (AUD) NAL unit
 	out = append(out, []byte{0x00, 0x00, 0x00, 0x01, 0x09, 0xf0}...)
 
-	// 2. Prepend SPS/PPS configuration NALs on first video frame or keyframes
+	// 2. Prepend SPS/PPS configuration NALs on keyframes
 	if writeExtra {
 		for _, sps := range spsList {
 			out = append(out, []byte{0x00, 0x00, 0x00, 0x01}...)
@@ -284,18 +293,28 @@ func avccToAnnexB(avcc []byte, spsList [][]byte, ppsList [][]byte, writeExtra bo
 		}
 	}
 
-	// 3. Process NALs in sample
+	// 3. Process NALs in sample using the correct NAL length size from avcC
 	idx := 0
 	for idx < len(avcc) {
-		if idx+4 > len(avcc) {
+		if idx+nalLengthSize > len(avcc) {
 			break
 		}
-		// Read 4-byte big-endian size
-		nalSize := uint32(avcc[idx])<<24 | uint32(avcc[idx+1])<<16 | uint32(avcc[idx+2])<<8 | uint32(avcc[idx+3])
-		idx += 4
+		// Read NAL size (big-endian, variable length)
+		var nalSize uint32
+		switch nalLengthSize {
+		case 1:
+			nalSize = uint32(avcc[idx])
+		case 2:
+			nalSize = uint32(avcc[idx])<<8 | uint32(avcc[idx+1])
+		case 3:
+			nalSize = uint32(avcc[idx])<<16 | uint32(avcc[idx+1])<<8 | uint32(avcc[idx+2])
+		case 4:
+			nalSize = uint32(avcc[idx])<<24 | uint32(avcc[idx+1])<<16 | uint32(avcc[idx+2])<<8 | uint32(avcc[idx+3])
+		}
+		idx += nalLengthSize
 
-		if idx+int(nalSize) > len(avcc) {
-			return nil, fmt.Errorf("truncated NAL unit data")
+		if nalSize == 0 || idx+int(nalSize) > len(avcc) {
+			break
 		}
 
 		// Write start code and NAL unit content
