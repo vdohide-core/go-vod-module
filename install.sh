@@ -238,8 +238,7 @@ server {
     add_header Access-Control-Expose-Headers 'Server,range,Content-Length,Content-Range' always;
 
     sub_filter_types application/vnd.apple.mpegurl;
-    sub_filter '/hls/' '/';
-    sub_filter '/index-v1-a1.m3u8' '/video.m3u8';
+    sub_filter 'index-v1-a1.m3u8' 'video.m3u8';
     sub_filter_once off;
   }
 
@@ -275,7 +274,6 @@ server {
     add_header Access-Control-Expose-Headers 'Server,range,Content-Length,Content-Range' always;
 
     sub_filter_types application/vnd.apple.mpegurl;
-    sub_filter '/hls/' '/';
     sub_filter_once off;
   }
 
@@ -341,8 +339,7 @@ server {
 
     sub_filter_types application/vnd.apple.mpegurl;
     sub_filter_types text/plain;
-    sub_filter '/hls/' '/';
-    sub_filter '.json/index-v1-a1.m3u8' '/video.m3u8';
+    sub_filter 'index-v1-a1.m3u8' 'video.m3u8';
     sub_filter_once off;
   }
 
@@ -380,8 +377,7 @@ server {
 
     sub_filter_types application/vnd.apple.mpegurl;
     sub_filter_types text/plain;
-    sub_filter '/hls/' '/';
-    sub_filter '.json/seg-' '/v-';
+    sub_filter 'seg-' 'v-';
     sub_filter '-v1-a1.ts' '.jpeg';
     sub_filter_once off;
   }
@@ -465,8 +461,6 @@ server {
 
     sub_filter_types application/vnd.apple.mpegurl;
     sub_filter_types text/plain;
-    sub_filter '/hls/' '/';
-    sub_filter '.json/' '/';
     sub_filter 'seg-' 'v-';
     sub_filter '-v1-a1.ts' '.jpeg';
     sub_filter_once off;
