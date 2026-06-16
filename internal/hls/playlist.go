@@ -10,12 +10,13 @@ import (
 )
 
 type HLSSegment struct {
-	Index        int
-	DurationSec  float64
-	StartSampleV int // Start sample index for video
-	EndSampleV   int // End sample index for video (exclusive)
-	StartSampleA int // Start sample index for audio
-	EndSampleA   int // End sample index for audio (exclusive)
+	Index          int
+	DurationSec    float64
+	StartSampleV   int // Start sample index for video (logical boundary)
+	EndSampleV     int // End sample index for video (exclusive)
+	PrerollSampleV int // Actual start for video muxing (previous keyframe)
+	StartSampleA   int // Start sample index for audio
+	EndSampleA     int // End sample index for audio (exclusive)
 }
 
 func GenerateSegments(meta *mp4.MovieMetadata, targetDurMs int, alignToKeyFrames bool) ([]HLSSegment, error) {
@@ -92,16 +93,33 @@ func GenerateSegments(meta *mp4.MovieMetadata, targetDurMs int, alignToKeyFrames
 					endA = len(audioTrack.Samples)
 				}
 
-				segDur := float64(videoTrack.Duration)/timescale - float64(vSamples[startV].DTS)/timescale
+				// Calculate last segment duration consistently with intermediate segments.
+				// Use the last sample's DTS + its delta (from stts) rather than
+				// videoTrack.Duration to match nginx-vod-module behavior.
+				lastSampleDTS := vSamples[len(vSamples)-1].DTS
+				lastSampleDelta := lastSampleDTS - vSamples[len(vSamples)-2].DTS
+				endDTS := lastSampleDTS + lastSampleDelta
+				segDur := float64(endDTS-vSamples[startV].DTS) / timescale
 
-				segments = append(segments, HLSSegment{
-					Index:        segIdx,
-					DurationSec:  segDur,
-					StartSampleV: startV,
-					EndSampleV:   endV,
-					StartSampleA: startA,
-					EndSampleA:   endA,
-				})
+				// last_rounded policy: if the last segment is shorter than half
+				// the target duration, merge it into the previous segment.
+				// This matches nginx-vod-module's vod_segment_count_policy last_rounded.
+				halfTarget := float64(targetDurMs) / 1000.0 / 2.0
+				if segDur < halfTarget && len(segments) > 0 {
+					prev := &segments[len(segments)-1]
+					prev.DurationSec += segDur
+					prev.EndSampleV = endV
+					prev.EndSampleA = endA
+				} else {
+					segments = append(segments, HLSSegment{
+						Index:        segIdx,
+						DurationSec:  segDur,
+						StartSampleV: startV,
+						EndSampleV:   endV,
+						StartSampleA: startA,
+						EndSampleA:   endA,
+					})
+				}
 			}
 		}
 	} else if audioTrack != nil && len(audioTrack.Samples) > 0 {
@@ -152,6 +170,25 @@ func GenerateSegments(meta *mp4.MovieMetadata, targetDurMs int, alignToKeyFrames
 					EndSampleA:   endA,
 				})
 			}
+		}
+	}
+
+	// When not aligning to keyframes, adjust each segment's PrerollSampleV
+	// to the previous keyframe so the decoder can initialize properly.
+	// This allows fixed-duration segments while keeping video decodable.
+	if videoTrack != nil && !alignToKeyFrames {
+		vSamples := videoTrack.Samples
+		for i := range segments {
+			kf := segments[i].StartSampleV
+			for kf > 0 && !vSamples[kf].IsKeyframe {
+				kf--
+			}
+			segments[i].PrerollSampleV = kf
+		}
+	} else {
+		// When aligned, preroll equals start (no extra frames needed)
+		for i := range segments {
+			segments[i].PrerollSampleV = segments[i].StartSampleV
 		}
 	}
 

@@ -42,12 +42,12 @@ func MuxSegment(ctx context.Context, meta *mp4.MovieMetadata, segment HLSSegment
 	// 2. Prepare merged sample list sorted by DTS
 	var samples []*mergedSample
 
-	if videoTrack != nil && segment.StartSampleV < len(videoTrack.Samples) {
+	if videoTrack != nil && segment.PrerollSampleV < len(videoTrack.Samples) {
 		endV := segment.EndSampleV
 		if endV > len(videoTrack.Samples) {
 			endV = len(videoTrack.Samples)
 		}
-		for i := segment.StartSampleV; i < endV; i++ {
+		for i := segment.PrerollSampleV; i < endV; i++ {
 			s := &videoTrack.Samples[i]
 			samples = append(samples, &mergedSample{
 				track:     videoTrack,
