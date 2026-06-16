@@ -54,3 +54,4 @@ jobs:
           files: |
             dist/linux
             dist/linux-arm64
+
