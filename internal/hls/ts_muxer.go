@@ -123,9 +123,6 @@ func MuxSegment(ctx context.Context, meta *mp4.MovieMetadata, segment HLSSegment
 		audioProfile, audioFreqIdx, audioChanCfg = 1, 4, 2 // Defaults (AAC-LC, 44.1kHz, Stereo)
 	}
 
-	// Helper to track first video frame
-	firstVideoFrame := true
-
 	// 5. Mux all samples in sorted order
 	for _, s := range samples {
 		rawBytes := make([]byte, s.sample.Size)
@@ -136,11 +133,13 @@ func MuxSegment(ctx context.Context, meta *mp4.MovieMetadata, segment HLSSegment
 		switch s.trackType {
 		case "video":
 			// Convert H.264 AVCC to Annex B
-			annexBBytes, err := avccToAnnexB(rawBytes, spsList, ppsList, firstVideoFrame)
+			// SPS/PPS must be prepended at every keyframe (IDR) so the decoder
+			// can initialize correctly when starting playback from any segment
+			writeExtra := s.sample.IsKeyframe
+			annexBBytes, err := avccToAnnexB(rawBytes, spsList, ppsList, writeExtra)
 			if err != nil {
 				return fmt.Errorf("failed to convert video to Annex B: %w", err)
 			}
-			firstVideoFrame = false
 
 			_, err = mx.WriteData(&astits.MuxerData{
 				PID: 256,
